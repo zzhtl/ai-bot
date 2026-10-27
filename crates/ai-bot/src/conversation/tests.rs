@@ -2803,6 +2803,7 @@ async fn selected_model_survives_clearing_context() {
         &turns[0].id,
     )
     .await;
+    press(&w, Action::Effort(Effort::Max), &turns[0].id).await;
     say(&w, "om_clear", "清空上下文", json!({})).await;
     for _ in 0..250 {
         if replies(&w).await.iter().any(|reply| {
@@ -2818,6 +2819,7 @@ async fn selected_model_survives_clearing_context() {
     say(&w, "om_2", "重新提问", json!({})).await;
     let requests = requests_until(&w, 2).await;
     assert_eq!(requests[1].model.as_deref(), Some("catalog-2"));
+    assert_eq!(requests[1].effort, Some(Effort::Max));
     assert_eq!(requests[1].session, SessionRef::New);
     let turns = until(&w, "第二轮完成", all_finished(1)).await;
     press(&w, Action::ResetModel, &turns[0].id).await;
@@ -2842,6 +2844,7 @@ async fn selected_model_survives_clearing_context() {
     say(&w, "om_3", "恢复后提问", json!({})).await;
     let requests = requests_until(&w, 3).await;
     assert_eq!(requests[2].model.as_deref(), Some("opus"));
+    assert_eq!(requests[2].effort, Some(Effort::High));
 }
 
 #[tokio::test]
@@ -2874,10 +2877,15 @@ async fn selected_model_survives_cache_expiration_during_service_run() {
         .set_model_options("existing", true, Some("pinned-model"), None)
         .await
         .expect("选择模型");
+    w.store
+        .set_model_options("existing", false, None, Some("max"))
+        .await
+        .expect("选择强度");
     assert_eq!(w.backend.model_queries.load(Ordering::SeqCst), 0);
     say(&w, "om_1", "继续查问题", json!({})).await;
     let requests = requests_until(&w, 1).await;
     assert_eq!(requests[0].model.as_deref(), Some("pinned-model"));
+    assert_eq!(requests[0].effort, Some(Effort::Max));
     assert_eq!(
         w.backend.model_queries.load(Ordering::SeqCst),
         1,
@@ -2918,6 +2926,7 @@ async fn restart_retains_model_until_the_cache_is_expired() {
         .expect("模拟重启");
     let saved = w.store.conversation(id).await.expect("查询").expect("会话");
     assert_eq!(saved.model_override.as_deref(), Some("catalog-2"));
+    assert_eq!(saved.effort_override.as_deref(), Some("xhigh"));
     std::fs::write(&cache, json!({"checked_at_ms": 0, "models": []}).to_string())
         .expect("过期缓存");
     crate::reset_expired_model_preferences(&w.store, w._dir.path())
@@ -2925,7 +2934,7 @@ async fn restart_retains_model_until_the_cache_is_expired() {
         .expect("模拟过期后重启");
     let saved = w.store.conversation(id).await.expect("查询").expect("会话");
     assert!(saved.model_override.is_none());
-    assert_eq!(saved.effort_override.as_deref(), Some("xhigh"));
+    assert!(saved.effort_override.is_none());
     w.store
         .create_conversation(&NewConversation {
             id: "new",
@@ -2947,6 +2956,7 @@ async fn restart_retains_model_until_the_cache_is_expired() {
         .expect("查询")
         .expect("新会话");
     assert!(new.model_override.is_none(), "聊天偏好也应重置");
+    assert!(new.effort_override.is_none(), "聊天强度也应重置");
 }
 
 #[tokio::test]

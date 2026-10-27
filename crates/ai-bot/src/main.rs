@@ -380,7 +380,7 @@ async fn reset_expired_model_preferences(
     let cache = model_cache::ModelCache::new(data_dir.join("codex-models.json"), None);
     if cache.is_expired() {
         store.reset_model_preferences().await?;
-        tracing::info!("服务重启时模型目录已失效，恢复默认模型");
+        tracing::info!("服务重启时模型目录已失效，恢复默认模型和推理强度");
     }
     Ok(())
 }

@@ -4,7 +4,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::time::Duration;
 
 #[tokio::test]
-async fn high_effort_overrides_personal_settings_for_explicit_and_default_turns() {
+async fn configured_effort_overrides_personal_settings_for_explicit_and_default_turns() {
     let root = tempfile::tempdir().expect("临时目录");
     let home = root.path().join(".codex");
     std::fs::create_dir(&home).expect("Codex 配置目录");
@@ -48,6 +48,12 @@ printf '%s\n' '{"type":"thread.started","thread_id":"test-thread"}' '{"type":"tu
             "switch-retry",
             SessionRef::Resume("test-thread".into()),
             Some(Effort::Xhigh),
+        ),
+        ("max-first", SessionRef::New, Some(Effort::Max)),
+        (
+            "max-next",
+            SessionRef::Resume("test-thread".into()),
+            Some(Effort::Max),
         ),
         ("default-first", SessionRef::New, None),
         ("default-next", SessionRef::Resume("test-thread".into()), None),
@@ -111,7 +117,10 @@ printf '%s\n' '{"type":"thread.started","thread_id":"test-thread"}' '{"type":"tu
         assert!(
             !args
                 .iter()
-                .any(|arg| arg.contains("personal-model") || arg.contains("\"max\""))
+                .any(|arg| {
+                    arg.contains("personal-model")
+                        || (effort != Some(Effort::Max) && arg.contains("\"max\""))
+                })
         );
         assert_eq!(args.contains(&"resume"), !run.ends_with("first"));
     }
