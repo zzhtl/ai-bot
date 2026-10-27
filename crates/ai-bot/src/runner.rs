@@ -254,6 +254,7 @@ impl Runner {
             Ok(Some(conversation)) if conversation.backend == "codex" => conversation,
             _ => return,
         };
+        self.models.refresh_if_needed().await;
         let view = card::model_choices(
             &self.models.choices(),
             self.model(&conversation).unwrap_or("CLI 默认"),
@@ -285,10 +286,10 @@ impl Runner {
         max_concurrent: usize,
         bot_open_id: Arc<OnceLock<String>>,
     ) -> Self {
-        let models = Arc::new(ModelCache::new(settings.data_dir.join("codex-models.json")));
-        if let Some(backend) = backends.get("codex") {
-            models.start(Arc::clone(backend));
-        }
+        let models = Arc::new(ModelCache::new(
+            settings.data_dir.join("codex-models.json"),
+            backends.get("codex").cloned(),
+        ));
         Self {
             api,
             store,
@@ -375,6 +376,9 @@ impl Runner {
             }
         };
         self.snapshot_model(&spec, &conversation).await;
+        if conversation.backend == "codex" {
+            self.models.refresh_if_needed().await;
+        }
         let (reply_to, preview) = match spec.kind {
             TurnKind::Ask => match self.first_input(&spec.turn_id).await {
                 Ok((first_id, first)) => {
@@ -2085,6 +2089,9 @@ impl Runner {
         });
         if selectable && let Ok(Some(conversation)) = self.store.conversation_by_card(card_id).await
         {
+            if conversation.backend == "codex" {
+                self.models.refresh_if_needed().await;
+            }
             card::refresh_model_select(
                 &mut card,
                 &self.models.choices(),

@@ -287,6 +287,7 @@ impl Actor {
                 return Toast::error("读取模型配置失败，稍后再试");
             }
         };
+        let model_changed = matches!(&action, Action::Model { .. } | Action::ResetModel);
         match action {
             Action::Model { model } => {
                 let model = model.trim();
@@ -314,6 +315,7 @@ impl Actor {
             .store
             .set_model_options(
                 &self.conversation_id,
+                model_changed,
                 conversation.model_override.as_deref(),
                 conversation.effort_override.as_deref(),
             )

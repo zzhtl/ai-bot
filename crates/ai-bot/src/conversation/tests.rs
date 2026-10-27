@@ -21,7 +21,7 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 use super::{Job, Registry};
 use crate::callback::{Action, Toast};
 use crate::runner::{Runner, Settings};
-use crate::store::{NewInput, Store, Turn, TurnStatus};
+use crate::store::{NewConversation, NewInput, Origin, Store, Turn, TurnStatus};
 
 const BOSS: &str = "ou_boss";
 const BOT: &str = "ou_bot";
@@ -286,6 +286,18 @@ async fn world_backend(
     writer: Option<Value>,
     backend_name: &str,
 ) -> World {
+    world_backend_with_cache(scripts, debounce, window, docs, writer, backend_name, None).await
+}
+
+async fn world_backend_with_cache(
+    scripts: Vec<Vec<Beat>>,
+    debounce: Duration,
+    window: Option<(usize, Duration)>,
+    docs: bool,
+    writer: Option<Value>,
+    backend_name: &str,
+    initial_cache: Option<Value>,
+) -> World {
     let server = MockServer::start().await;
     let ok = |data: Value| {
         ResponseTemplate::new(200).set_body_json(json!({"code": 0, "msg": "ok", "data": data}))
@@ -328,6 +340,9 @@ async fn world_backend(
         .await;
 
     let dir = tempfile::tempdir().expect("临时目录");
+    if let Some(cache) = initial_cache {
+        std::fs::write(dir.path().join("codex-models.json"), cache.to_string()).expect("模型缓存");
+    }
     let store = Store::open(dir.path()).await.expect("数据库");
     let base = url::Url::parse(&format!("{}/", server.uri())).expect("地址");
     let api = Arc::new(ApiClient::new(base, "cli_x", SecretString::from("s")).expect("客户端"));
@@ -2771,6 +2786,170 @@ async fn requests_until(w: &World, count: usize) -> Vec<TurnRequest> {
 }
 
 #[tokio::test]
+async fn selected_model_survives_clearing_context() {
+    let w = codex_world(vec![
+        vec![started("s-1"), answered("第一次")],
+        vec![started("s-2"), answered("清空后")],
+        vec![started("s-3"), answered("恢复默认")],
+    ])
+    .await;
+    say(&w, "om_1", "查问题", json!({})).await;
+    let turns = until(&w, "第一轮完成", all_finished(1)).await;
+    press(
+        &w,
+        Action::Model {
+            model: "catalog-2".into(),
+        },
+        &turns[0].id,
+    )
+    .await;
+    say(&w, "om_clear", "清空上下文", json!({})).await;
+    for _ in 0..250 {
+        if replies(&w).await.iter().any(|reply| {
+            reply["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("已清空上下文"))
+        }) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(w.store.all_turns().await.is_empty(), "旧轮次已清空");
+    say(&w, "om_2", "重新提问", json!({})).await;
+    let requests = requests_until(&w, 2).await;
+    assert_eq!(requests[1].model.as_deref(), Some("catalog-2"));
+    assert_eq!(requests[1].session, SessionRef::New);
+    let turns = until(&w, "第二轮完成", all_finished(1)).await;
+    press(&w, Action::ResetModel, &turns[0].id).await;
+    say(&w, "om_clear_2", "清空上下文", json!({})).await;
+    for _ in 0..250 {
+        if replies(&w)
+            .await
+            .iter()
+            .filter(|reply| {
+                reply["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("已清空上下文"))
+            })
+            .count()
+            >= 2
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(w.store.all_turns().await.is_empty(), "第二轮已清空");
+    say(&w, "om_3", "恢复后提问", json!({})).await;
+    let requests = requests_until(&w, 3).await;
+    assert_eq!(requests[2].model.as_deref(), Some("opus"));
+}
+
+#[tokio::test]
+async fn selected_model_survives_cache_expiration_during_service_run() {
+    let w = world_backend_with_cache(
+        vec![vec![started("s-1"), answered("完成")]],
+        DEBOUNCE,
+        None,
+        false,
+        None,
+        "codex",
+        Some(json!({"checked_at_ms": 0, "models": [{"id": "old-model", "name": "旧模型"}]})),
+    )
+    .await;
+    w.store
+        .create_conversation(&NewConversation {
+            id: "existing",
+            chat_id: "oc_1",
+            chat_type: "group",
+            origin: Origin::NewThread,
+            thread_id: None,
+            root_message_id: "om_old",
+            owner_open_id: BOSS,
+            backend: "codex",
+            now_ms: crate::store::now_ms(),
+        })
+        .await
+        .expect("现有会话");
+    w.store
+        .set_model_options("existing", true, Some("pinned-model"), None)
+        .await
+        .expect("选择模型");
+    assert_eq!(w.backend.model_queries.load(Ordering::SeqCst), 0);
+    say(&w, "om_1", "继续查问题", json!({})).await;
+    let requests = requests_until(&w, 1).await;
+    assert_eq!(requests[0].model.as_deref(), Some("pinned-model"));
+    assert_eq!(
+        w.backend.model_queries.load(Ordering::SeqCst),
+        1,
+        "过期目录按需刷新"
+    );
+    until(&w, "完成", all_finished(1)).await;
+    assert!(
+        last_card(&w, "om_card_1")
+            .await
+            .to_string()
+            .contains("pinned-model")
+    );
+}
+
+#[tokio::test]
+async fn restart_retains_model_until_the_cache_is_expired() {
+    let w = codex_world(vec![vec![started("s-1"), answered("完成")]]).await;
+    say(&w, "om_1", "查问题", json!({})).await;
+    let turns = until(&w, "完成", all_finished(1)).await;
+    let id = &turns[0].conversation_id;
+    press(
+        &w,
+        Action::Model {
+            model: "catalog-2".into(),
+        },
+        &turns[0].id,
+    )
+    .await;
+    press(&w, Action::Effort(Effort::Xhigh), &turns[0].id).await;
+    let cache = w._dir.path().join("codex-models.json");
+    std::fs::write(
+        &cache,
+        json!({"checked_at_ms": crate::store::now_ms(), "models": []}).to_string(),
+    )
+    .expect("未过期缓存");
+    crate::reset_expired_model_preferences(&w.store, w._dir.path())
+        .await
+        .expect("模拟重启");
+    let saved = w.store.conversation(id).await.expect("查询").expect("会话");
+    assert_eq!(saved.model_override.as_deref(), Some("catalog-2"));
+    std::fs::write(&cache, json!({"checked_at_ms": 0, "models": []}).to_string())
+        .expect("过期缓存");
+    crate::reset_expired_model_preferences(&w.store, w._dir.path())
+        .await
+        .expect("模拟过期后重启");
+    let saved = w.store.conversation(id).await.expect("查询").expect("会话");
+    assert!(saved.model_override.is_none());
+    assert_eq!(saved.effort_override.as_deref(), Some("xhigh"));
+    w.store
+        .create_conversation(&NewConversation {
+            id: "new",
+            chat_id: "oc_1",
+            chat_type: "p2p",
+            origin: Origin::P2p,
+            thread_id: None,
+            root_message_id: "om_new",
+            owner_open_id: BOSS,
+            backend: "codex",
+            now_ms: crate::store::now_ms(),
+        })
+        .await
+        .expect("新会话");
+    let new = w
+        .store
+        .conversation("new")
+        .await
+        .expect("查询")
+        .expect("新会话");
+    assert!(new.model_override.is_none(), "聊天偏好也应重置");
+}
+
+#[tokio::test]
 async fn codex_model_switch_is_persisted_and_applies_to_queued_turns() {
     let gate = Arc::new(tokio::sync::Notify::new());
     let w = codex_world(vec![
@@ -3007,7 +3186,7 @@ async fn codex_closure_cards_retain_their_model_when_redrawn() {
 }
 
 #[tokio::test]
-async fn model_dropdown_uses_the_daily_cache_and_switches_without_an_extra_card() {
+async fn model_dropdown_uses_the_hourly_cache_and_switches_without_an_extra_card() {
     let w = codex_world(vec![
         vec![started("s-1"), answered("第一轮")],
         vec![started("s-1"), answered("新模型")],
@@ -3058,6 +3237,31 @@ async fn model_dropdown_uses_the_daily_cache_and_switches_without_an_extra_card(
         "打开和选择模型不会再次查询"
     );
     assert_eq!(turns.len(), 1);
+}
+
+#[tokio::test]
+async fn expired_model_cache_refreshes_when_a_card_is_first_used() {
+    let w = world_backend_with_cache(
+        vec![vec![started("s-1"), answered("完成")]],
+        DEBOUNCE,
+        None,
+        false,
+        None,
+        "codex",
+        Some(json!({"checked_at_ms": 0, "models": [{"id": "old-model", "name": "旧模型"}]})),
+    )
+    .await;
+    assert_eq!(
+        w.backend.model_queries.load(Ordering::SeqCst),
+        0,
+        "启动时不刷新"
+    );
+    say(&w, "om_1", "查问题", json!({})).await;
+    until(&w, "完成", all_finished(1)).await;
+    let card = last_card(&w, "om_card_1").await.to_string();
+    assert!(card.contains("catalog-1"), "{card}");
+    assert!(!card.contains("old-model"), "{card}");
+    assert_eq!(w.backend.model_queries.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

@@ -983,7 +983,7 @@ pub fn model_choices(models: &[ModelOption], model: &str, effort: &str, turn_id:
     elements.push(model_select(models, model, turn_id));
     card(
         "选择 Codex 模型",
-        "每日更新的模型目录",
+        "按需更新的模型目录",
         "blue",
         elements,
     )

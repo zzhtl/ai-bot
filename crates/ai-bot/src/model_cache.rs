@@ -1,4 +1,4 @@
-//! 模型目录每 24 小时查询一次，持久化后跨服务重启复用。
+//! 模型目录缓存一小时，过期后在下次使用时刷新。
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::store::now_ms;
 
-const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+const HOUR_MS: i64 = 60 * 60 * 1000;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Snapshot {
@@ -20,16 +20,20 @@ struct Snapshot {
 pub struct ModelCache {
     file: PathBuf,
     snapshot: Mutex<Option<Snapshot>>,
+    backend: Option<Arc<dyn AgentBackend>>,
+    refreshing: tokio::sync::Mutex<()>,
 }
 
 impl ModelCache {
-    pub fn new(file: PathBuf) -> Self {
+    pub fn new(file: PathBuf, backend: Option<Arc<dyn AgentBackend>>) -> Self {
         let snapshot = std::fs::read(&file)
             .ok()
             .and_then(|raw| serde_json::from_slice(&raw).ok());
         Self {
             file,
             snapshot: Mutex::new(snapshot),
+            backend,
+            refreshing: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -42,6 +46,10 @@ impl ModelCache {
             .unwrap_or_default()
     }
 
+    pub fn is_expired(&self) -> bool {
+        self.wait(now_ms()).is_zero()
+    }
+
     fn wait(&self, now: i64) -> Duration {
         let millis = self
             .snapshot
@@ -51,7 +59,7 @@ impl ModelCache {
             .map(|snapshot| {
                 snapshot
                     .checked_at_ms
-                    .saturating_add(DAY_MS)
+                    .saturating_add(HOUR_MS)
                     .saturating_sub(now)
                     .max(0)
             })
@@ -60,6 +68,10 @@ impl ModelCache {
     }
 
     async fn refresh(&self, backend: &dyn AgentBackend, now: i64) -> anyhow::Result<()> {
+        if !self.wait(now).is_zero() {
+            return Ok(());
+        }
+        let _refreshing = self.refreshing.lock().await;
         if !self.wait(now).is_zero() {
             return Ok(());
         }
@@ -81,16 +93,12 @@ impl ModelCache {
         Ok(())
     }
 
-    pub fn start(self: &Arc<Self>, backend: Arc<dyn AgentBackend>) {
-        let cache = Arc::clone(self);
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(cache.wait(now_ms())).await;
-                if let Err(err) = cache.refresh(&*backend, now_ms()).await {
-                    tracing::warn!(%err, "更新每日模型缓存失败，保留已有目录");
-                }
-            }
-        });
+    pub async fn refresh_if_needed(&self) {
+        if let Some(backend) = &self.backend
+            && let Err(err) = self.refresh(&**backend, now_ms()).await
+        {
+            tracing::warn!(%err, "更新模型缓存失败");
+        }
     }
 }
 
@@ -111,6 +119,7 @@ mod tests {
         }
         async fn models(&self) -> Result<Vec<ModelOption>, AgentError> {
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            tokio::task::yield_now().await;
             if self.fail.load(Ordering::SeqCst) {
                 return Err(AgentError::Preflight("暂时失败".into()));
             }
@@ -130,24 +139,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cache_queries_once_per_day_and_survives_restarts() {
+    async fn cache_expires_after_one_hour_and_survives_restarts() {
         let dir = tempfile::tempdir().expect("目录");
         let file = dir.path().join("codex-models.json");
         let backend = Backend {
             calls: AtomicUsize::new(0),
             fail: AtomicBool::new(false),
         };
-        let cache = ModelCache::new(file.clone());
+        let cache = ModelCache::new(file.clone(), None);
         cache.refresh(&backend, 100).await.expect("首次刷新");
         assert_eq!(cache.choices().len(), 5);
-        cache.refresh(&backend, 1000).await.expect("当日复用");
-        let rebooted = ModelCache::new(file);
+        cache
+            .refresh(&backend, 100 + HOUR_MS - 1)
+            .await
+            .expect("一小时内复用");
+        let rebooted = ModelCache::new(file, None);
         rebooted.refresh(&backend, 1000).await.expect("重启复用");
         assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+        assert!(rebooted.wait(100 + HOUR_MS).is_zero());
+        assert_eq!(
+            backend.calls.load(Ordering::SeqCst),
+            1,
+            "到期本身不触发查询"
+        );
         rebooted
-            .refresh(&backend, 100 + DAY_MS)
+            .refresh(&backend, 100 + HOUR_MS)
             .await
-            .expect("次日刷新");
+            .expect("到期后使用时刷新");
         assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
         assert_eq!(rebooted.choices()[0].id, "model-1-0");
     }
@@ -160,18 +178,41 @@ mod tests {
             calls: AtomicUsize::new(0),
             fail: AtomicBool::new(false),
         };
-        let cache = ModelCache::new(file.clone());
+        let cache = ModelCache::new(file.clone(), None);
         cache.refresh(&backend, 100).await.expect("首次刷新");
         let previous = cache.choices();
         backend.fail.store(true, Ordering::SeqCst);
-        assert!(cache.refresh(&backend, 100 + DAY_MS).await.is_err());
+        assert!(cache.refresh(&backend, 100 + HOUR_MS).await.is_err());
         assert_eq!(cache.choices(), previous);
-        let rebooted = ModelCache::new(file);
+        let rebooted = ModelCache::new(file, None);
         rebooted
-            .refresh(&backend, 1000 + DAY_MS)
+            .refresh(&backend, 1000 + HOUR_MS)
             .await
-            .expect("失败后当日复用");
+            .expect("失败后一小时内复用");
         assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
         assert_eq!(rebooted.choices(), previous);
+        backend.fail.store(false, Ordering::SeqCst);
+        rebooted
+            .refresh(&backend, 100 + 2 * HOUR_MS)
+            .await
+            .expect("下次到期时恢复刷新");
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(rebooted.choices()[0].id, "model-2-0");
+    }
+
+    #[tokio::test]
+    async fn concurrent_expired_uses_share_one_refresh() {
+        let dir = tempfile::tempdir().expect("目录");
+        let cache = ModelCache::new(dir.path().join("codex-models.json"), None);
+        let backend = Backend {
+            calls: AtomicUsize::new(0),
+            fail: AtomicBool::new(false),
+        };
+        let (first, second) =
+            tokio::join!(cache.refresh(&backend, 100), cache.refresh(&backend, 100));
+        first.expect("首次刷新");
+        second.expect("并发复用");
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(cache.choices()[0].id, "model-0-0");
     }
 }

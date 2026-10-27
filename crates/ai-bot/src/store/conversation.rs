@@ -186,24 +186,84 @@ pub struct InterruptedTurn {
 }
 
 impl Store {
-    /// 仅覆盖当前仍有效的 Codex 会话，空值用于恢复默认配置。
+    /// 保存聊天的模型选择；强度只覆盖当前会话，空值用于恢复默认配置。
     pub async fn set_model_options(
         &self,
         conversation_id: &str,
+        model_changed: bool,
         model: Option<&str>,
         effort: Option<&str>,
     ) -> anyhow::Result<bool> {
+        let mut tx = self.pool.begin().await.context("开启事务失败")?;
         let result = sqlx::query(
-            "UPDATE conversations SET model_override = ?, effort_override = ?
+            "UPDATE conversations SET model_override = CASE WHEN ? THEN ? ELSE model_override END,
+                                      effort_override = ?
              WHERE id = ? AND status = 'active' AND backend = 'codex'",
         )
+        .bind(model_changed)
         .bind(model)
         .bind(effort)
         .bind(conversation_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .context("保存会话模型配置失败")?;
-        Ok(result.rows_affected() == 1)
+        if result.rows_affected() != 1 {
+            return Ok(false);
+        }
+        if !model_changed {
+            tx.commit().await.context("保存会话强度失败")?;
+            return Ok(true);
+        }
+        if let Some(model) = model {
+            sqlx::query(
+                "INSERT INTO chat_model_preferences (chat_id, model)
+                 SELECT chat_id, ? FROM conversations WHERE id = ?
+                 ON CONFLICT (chat_id) DO UPDATE SET model = excluded.model",
+            )
+            .bind(model)
+            .bind(conversation_id)
+            .execute(&mut *tx)
+            .await
+            .context("保存聊天模型配置失败")?;
+        } else {
+            sqlx::query(
+                "DELETE FROM chat_model_preferences
+                 WHERE chat_id = (SELECT chat_id FROM conversations WHERE id = ?)",
+            )
+            .bind(conversation_id)
+            .execute(&mut *tx)
+            .await
+            .context("恢复聊天默认模型失败")?;
+        }
+        sqlx::query(
+            "UPDATE conversations SET model_override = ?
+             WHERE chat_id = (SELECT chat_id FROM conversations WHERE id = ?)
+               AND status = 'active' AND backend = 'codex'",
+        )
+        .bind(model)
+        .bind(conversation_id)
+        .execute(&mut *tx)
+        .await
+        .context("同步聊天模型配置失败")?;
+        tx.commit().await.context("保存聊天模型配置失败")?;
+        Ok(true)
+    }
+
+    /// 仅在服务重启且模型目录已过期时恢复默认模型。
+    pub async fn reset_model_preferences(&self) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await.context("开启事务失败")?;
+        sqlx::query("DELETE FROM chat_model_preferences")
+            .execute(&mut *tx)
+            .await
+            .context("清除聊天模型配置失败")?;
+        sqlx::query(
+            "UPDATE conversations SET model_override = NULL WHERE backend = 'codex' AND status = 'active'",
+        )
+        .execute(&mut *tx)
+        .await
+        .context("重置会话模型配置失败")?;
+        tx.commit().await.context("重置模型配置失败")?;
+        Ok(())
     }
 
     /// 按话题或话题根消息找进行中的会话。
@@ -332,8 +392,11 @@ impl Store {
         sqlx::query(
             "INSERT INTO conversations
                  (id, chat_id, chat_type, origin, thread_id, root_message_id, owner_open_id,
-                  backend, created_at_ms, updated_at_ms)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  backend, created_at_ms, updated_at_ms, model_override)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                     CASE WHEN ? = 'codex' THEN
+                         (SELECT model FROM chat_model_preferences WHERE chat_id = ?)
+                     END)",
         )
         .bind(new.id)
         .bind(new.chat_id)
@@ -345,6 +408,8 @@ impl Store {
         .bind(new.backend)
         .bind(new.now_ms)
         .bind(new.now_ms)
+        .bind(new.backend)
+        .bind(new.chat_id)
         .execute(&self.pool)
         .await
         .context("创建会话失败")?;
@@ -964,6 +1029,90 @@ mod tests {
             })
             .await
             .expect("创建会话");
+    }
+
+    #[tokio::test]
+    async fn chat_model_selection_is_shared_and_effort_updates_do_not_replace_it() {
+        let (store, _dir) = store().await;
+        for (id, chat) in [("a", "chat-1"), ("b", "chat-1"), ("c", "chat-2")] {
+            store
+                .create_conversation(&NewConversation {
+                    id,
+                    chat_id: chat,
+                    chat_type: "p2p",
+                    origin: Origin::P2p,
+                    thread_id: None,
+                    root_message_id: id,
+                    owner_open_id: "ou_1",
+                    backend: "codex",
+                    now_ms: 1,
+                })
+                .await
+                .expect("创建会话");
+        }
+        store
+            .set_model_options("a", true, Some("chosen"), None)
+            .await
+            .expect("选择模型");
+        let same_chat = store.conversation("b").await.expect("查询").expect("会话");
+        assert_eq!(same_chat.model_override.as_deref(), Some("chosen"));
+        let other_chat = store.conversation("c").await.expect("查询").expect("会话");
+        assert!(other_chat.model_override.is_none());
+        store
+            .set_model_options("b", false, Some("stale"), Some("max"))
+            .await
+            .expect("修改强度");
+        let saved = store.conversation("b").await.expect("查询").expect("会话");
+        assert_eq!(saved.model_override.as_deref(), Some("chosen"));
+        assert_eq!(saved.effort_override.as_deref(), Some("max"));
+        store
+            .set_model_options("a", true, None, None)
+            .await
+            .expect("恢复默认");
+        let saved = store.conversation("b").await.expect("查询").expect("会话");
+        assert!(saved.model_override.is_none());
+        assert_eq!(saved.effort_override.as_deref(), Some("max"));
+    }
+
+    #[tokio::test]
+    async fn model_preferences_migration_keeps_the_latest_active_choice_per_chat() {
+        let (store, _dir) = store().await;
+        for (id, chat, at) in [("a", "chat-1", 1), ("b", "chat-1", 2), ("c", "chat-2", 1)] {
+            store
+                .create_conversation(&NewConversation {
+                    id,
+                    chat_id: chat,
+                    chat_type: "p2p",
+                    origin: Origin::P2p,
+                    thread_id: None,
+                    root_message_id: id,
+                    owner_open_id: "ou_1",
+                    backend: "codex",
+                    now_ms: at,
+                })
+                .await
+                .expect("创建旧会话");
+        }
+        sqlx::query("UPDATE conversations SET model_override = 'old' WHERE id = 'a'")
+            .execute(&store.pool)
+            .await
+            .expect("旧选择");
+        sqlx::query("UPDATE conversations SET model_override = 'chosen' WHERE id = 'c'")
+            .execute(&store.pool)
+            .await
+            .expect("另一聊天的选择");
+        sqlx::query("DROP TABLE chat_model_preferences")
+            .execute(&store.pool)
+            .await
+            .expect("模拟升级前");
+        sqlx::raw_sql(include_str!("migrations/0009_chat_model_preferences.sql"))
+            .execute(&store.pool)
+            .await
+            .expect("执行迁移");
+        let default = store.conversation("a").await.expect("查询").expect("会话");
+        assert!(default.model_override.is_none());
+        let selected = store.conversation("c").await.expect("查询").expect("会话");
+        assert_eq!(selected.model_override.as_deref(), Some("chosen"));
     }
 
     #[tokio::test]

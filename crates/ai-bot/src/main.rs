@@ -144,6 +144,9 @@ async fn run(config_path: &Path) -> anyhow::Result<()> {
     prepare_data_dir(data_dir)?;
     let _lock = lock::acquire(data_dir)?;
     let store = store::Store::open(data_dir).await?;
+    if config.agent.backend == "codex" {
+        reset_expired_model_preferences(&store, data_dir).await?;
+    }
 
     let api = Arc::new(
         ApiClient::new(
@@ -367,6 +370,18 @@ async fn run(config_path: &Path) -> anyhow::Result<()> {
         client.run(ingest, cancel).await;
     }
     tracing::info!("ai-bot 已退出");
+    Ok(())
+}
+
+async fn reset_expired_model_preferences(
+    store: &store::Store,
+    data_dir: &Path,
+) -> anyhow::Result<()> {
+    let cache = model_cache::ModelCache::new(data_dir.join("codex-models.json"), None);
+    if cache.is_expired() {
+        store.reset_model_preferences().await?;
+        tracing::info!("服务重启时模型目录已失效，恢复默认模型");
+    }
     Ok(())
 }
 
