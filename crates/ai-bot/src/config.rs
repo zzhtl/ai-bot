@@ -502,7 +502,7 @@ mod tests {
         let raw = include_str!("../../../config.codex.example.toml");
         let config = Config::parse(raw).expect("Codex 示例");
         assert_eq!(config.agent.backend, "codex");
-        assert_eq!(config.agent.model.as_deref(), Some("gpt-6.1-sol"));
+        assert_eq!(config.agent.model.as_deref(), Some("gpt-6-astra"));
         assert_eq!(
             config.agent.effort_level(),
             Some(ai_bot_agent::Effort::High)

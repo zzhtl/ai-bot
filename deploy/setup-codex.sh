@@ -54,7 +54,7 @@ if not config.exists():
         '[access]', f'allowed_emails = {quote(source["access"].get("allowed_emails", []))}',
         f'allowed_open_ids = {quote(source["access"].get("allowed_open_ids", []))}',
         '[storage]', f'data_dir = {quote(str(home / ".local/share/ai-bot"))}',
-        '[agent]', 'backend = "codex"', 'model = "gpt-6.1-sol"', 'effort = "high"',
+        '[agent]', 'backend = "codex"', 'model = "gpt-6-astra"', 'effort = "high"',
         f'timeout_secs = {source.get("agent", {}).get("timeout_secs", 7200)}',
         f'max_concurrent = {source.get("agent", {}).get("max_concurrent", 1)}',
         '[agent.codex]', f'program = {quote(env["SETUP_CODEX_BIN"])}', 'profile = "ai-bot"',
@@ -89,7 +89,7 @@ if not secret.exists():
     secret.chmod(0o600)
 profile = codex / 'ai-bot.config.toml'
 if not profile.exists():
-    lines = ['model = "gpt-6.1-sol"', 'model_reasoning_effort = "high"', 'web_search = "live"']
+    lines = ['model = "gpt-6-astra"', 'model_reasoning_effort = "high"', 'web_search = "live"']
     base_config = codex / 'config.toml'
     base = tomllib.loads(base_config.read_text()) if base_config.exists() else {}
     if 'qtmcp' in base.get('mcp_servers', {}):

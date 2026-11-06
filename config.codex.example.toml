@@ -12,7 +12,7 @@ data_dir = "/home/someone/.local/share/ai-bot"
 
 [agent]
 backend = "codex"
-model = "gpt-6.1-sol"
+model = "gpt-6-astra"
 effort = "high"
 # 多阶段工程任务预留 2 小时，卡片上仍可随时停止。
 timeout_secs = 7200

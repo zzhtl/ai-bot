@@ -8,7 +8,7 @@
 ```
 
 - **不需要公网入口**：事件和卡片回调都走飞书长连接（WebSocket），机器能出网访问 `open.feishu.cn` 就行，不用域名和回调地址。
-- **复用本机的 Codex**：使用已有的 `codex login` 和 `CODEX_HOME`，正常加载本机配置、AGENTS.md、skills、插件、rules、MCP 与 OTEL。部署配置固定 GPT-6.1 Sol（`gpt-6.1-sol`）和 high，不受个人默认模型变化影响。调用使用 `codex exec -p ai-bot`，权限及功能开关沿用本机；飞书无人值守，审批策略为 `never`。支持图片、结构化回复、多轮续接、停止和超时。
+- **复用本机的 Codex**：使用已有的 `codex login` 和 `CODEX_HOME`，正常加载本机配置、AGENTS.md、skills、插件、rules、MCP 与 OTEL。部署配置固定 GPT-6 Astra（`gpt-6-astra`）和 high，不受个人默认模型变化影响。调用使用 `codex exec -p ai-bot`，权限及功能开关沿用本机；飞书无人值守，审批策略为 `never`。支持图片、结构化回复、多轮续接、停止和超时。
 - **复用本机的 Claude Code**：直接用部署用户已登录的 `claude`，不另配 token；auto 权限模式，模型跟随 CLI 默认，推理强度 xhigh：正确优先，多花的时间用在逐条核对证据上。
 - **qtmcp 可选**：装了就接上，Agent 能读写 Jira、Confluence、GitLab、Jenkins（GitLab 能按关键词搜代码、看文件历史和 blame、按版本号找 tag，要用带这些动作的 qtmcp）；没装就只凭聊天内容回答。
 - **联网和命令行**：Codex profile 显式启用 `web_search = "live"`，使用原生 Web 搜索和网页读取；原始网页、文件下载可通过 shell 的 curl / Python 获取。shell 沿用本机 Codex 权限及服务用户的 PATH，可执行命令、读写任务文件和运行工具链。Claude 对应使用 WebSearch、WebFetch、Bash。公开仓库可 clone 到会话工作目录后检索；需要在提问人现场执行的命令仍作为回复给出。
@@ -26,7 +26,7 @@ deploy/setup-codex.sh /home/qingteng/qt/ai-bot/config.toml
 
 参考配置提供飞书 App ID、白名单、上下文和卡片设置；也兼容目录中的 `dev.toml`。密钥用同目录的 `ai-bot.env` / `dev.env`，或填入 `~/config/ai-bot/ai-bot.env` 的 `FEISHU_APP_SECRET`。脚本生成 `~/config/ai-bot/config.toml`、`ai-bot.env` 和 `bin/ai-bot`，注册并启动用户级 systemd 服务；已有配置、密钥和 profile 保留。qtmcp 配置默认使用 `~/.config/qtmcp/config.toml`，可通过 `QTMCP_CONFIG` 指定。完整字段见 `config.codex.example.toml`。Codex 不支持 `budget_usd`，用 `timeout_secs` 限制单轮执行时间；Codex 示例及未指定超时的新部署预留 7200 秒（2 小时），参考配置或已有配置中的超时保留。停止或超时只停止本地 Agent，已触发的远端任务需按具体 ID 查询，不能假定同时停止。
 
-新生成的 `[agent]` 默认 `model = "gpt-6.1-sol"`、`effort = "high"`；升级已有部署时，在服务实际使用的配置中补上这两项并重启。新会话、续接和重试每次都显式传入，启动和每轮日志记录模型及推理强度。
+新生成的 `[agent]` 默认 `model = "gpt-6-astra"`、`effort = "high"`；升级已有部署时，在服务实际使用的配置中补上这两项并重启。新会话、续接和重试每次都显式传入，启动和每轮日志记录模型及推理强度。
 
 Codex 的进度、答案和失败卡片将模型、推理强度下拉框和「默认」按钮放在同一行，直接显示选中值；悬停「默认」可查看本轮实际使用的配置及恢复默认提示，切换后下一轮或重试生效。模型下拉框最多展示当前目录的前 5 个可选模型。模型目录缓存一小时，到期后在生成或更新卡片时通过本机 `codex debug models` 查询并更新 `storage.data_dir/codex-models.json`；服务重启沿用尚未过期的缓存，刷新失败保留上次目录，一小时后下次使用时再试。已发送的静态卡片需重新生成或更新后才能展示新目录。回调沿用机器人白名单校验。卡片刷新保留当前会话已保存的模型和推理强度。
 
@@ -244,7 +244,7 @@ rm -rf ~/.claude/projects/-var-lib-ai-bot-sessions-*
 | --- | --- |
 | `feishu.app_id` | 应用的 App ID；App Secret 不在配置里 |
 | `access.allowed_open_ids` | 白名单 open_id（按应用区分）。也可以用 `allowed_emails`，但应用要有「通过手机号或邮箱获取用户 ID」的权限 |
-| `agent.model` / `agent.effort` | Codex 部署默认 gpt-6.1-sol / high；会话卡片设置优先于服务配置，服务配置优先于个人默认值，不写 model 时仍兼容 CLI 默认模型；effort 取 low / medium / high / xhigh / max |
+| `agent.model` / `agent.effort` | Codex 部署默认 gpt-6-astra / high；会话卡片设置优先于服务配置，服务配置优先于个人默认值，不写 model 时仍兼容 CLI 默认模型；effort 取 low / medium / high / xhigh / max |
 | `agent.timeout_secs` / `agent.budget_usd` | 单轮超时；单轮预算，订阅账号下是估算值，只起熔断作用 |
 | `agent.max_concurrent` | 同时分析的轮数，1～4 |
 | `agent.claude.program` | claude 的路径。用 PATH 里的那份会跟着自动升级，要锁版本就指向一份固定拷贝 |
