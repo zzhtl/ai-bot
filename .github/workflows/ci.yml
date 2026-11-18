@@ -37,3 +37,45 @@ jobs:
         run: |
           ! grep -rnE --include='*.rs' 'ai_bot_agent::(\{[^}]*)?claude' crates/ai-bot/src \
             | grep -v '^crates/ai-bot/src/main.rs:'
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/feishu-go-ws/go.mod
+          cache-dependency-path: tools/feishu-go-ws/go.sum
+      - run: cargo build --release --locked -p ai-bot
+      - run: go build -trimpath -o ../../target/release/feishu-go-ws .
+        working-directory: tools/feishu-go-ws
+      - name: Verify release binary against systemd
+        run: |
+          printf '%s\n' '[Service]' 'ExecStart=/usr/bin/sleep infinity' | sudo tee /run/systemd/system/ai-bot.service
+          sudo systemctl daemon-reload
+          target/release/ai-bot --help
+          target/release/ai-bot --start
+          systemctl is-active --quiet ai-bot
+          before=$(systemctl show -p InvocationID --value ai-bot)
+          target/release/ai-bot --restart
+          systemctl is-active --quiet ai-bot
+          after=$(systemctl show -p InvocationID --value ai-bot)
+          test -n "$before"
+          test -n "$after"
+          test "$before" != "$after"
+          target/release/ai-bot --stop
+          test "$(systemctl show -p ActiveState --value ai-bot)" = inactive
+      - name: Package Linux x86_64 binaries
+        run: |
+          tar -C target/release -czf ai-bot-linux-x86_64.tar.gz ai-bot feishu-go-ws
+          sha256sum ai-bot-linux-x86_64.tar.gz | tee ai-bot-linux-x86_64.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-bot-linux-x86_64-${{ github.sha }}
+          path: |
+            ai-bot-linux-x86_64.tar.gz
+            ai-bot-linux-x86_64.tar.gz.sha256
+          if-no-files-found: error

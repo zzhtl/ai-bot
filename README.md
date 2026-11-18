@@ -43,9 +43,12 @@ Codex 默认传递服务环境中的 SSH agent、Git、Java/Go/Rust、Kubernetes
 ```bash
 systemctl --user status ai-bot
 journalctl --user -u ai-bot -f
-systemctl --user restart ai-bot
-systemctl --user stop ai-bot
+~/config/ai-bot/bin/ai-bot --start
+~/config/ai-bot/bin/ai-bot --stop
+~/config/ai-bot/bin/ai-bot --restart
 ```
+
+这三个参数管理已安装的 `ai-bot.service`。用部署账号执行时，优先调用 `systemctl --user` 管理用户级服务；仅安装了系统级服务时调用 `sudo systemctl`。重启会中断正在处理的一轮，可以在原卡片点「重试」。
 
 需要注销后继续运行、开机自动启动时执行 `loginctl enable-linger "$USER"`。升级时重跑部署脚本；只准备部署和自检、暂不启动时添加第二个参数 `--no-start`。回退时停止服务，换回上一个二进制和配置，再重启。以下 `deploy/setup.sh`、`/etc/ai-bot` 和 Claude hook 的部署说明适用于 Claude 后端。
 
@@ -172,7 +175,7 @@ deploy/setup.sh
   - 逐项检查：配置、数据目录、数据库、飞书凭据和机器人能力、白名单、claude 登录、工具判决 hook、qtmcp、SSO 会话目录、PDF/Office/graphviz 工具。
   - 改了配置或环境，先跑它。
 - **日志**：`journalctl -u ai-bot -f`，看不到就加 sudo。
-- **重启**：`sudo systemctl restart ai-bot`。改了 `/etc/ai-bot/config.toml` 要重启才生效。
+- **重启**：系统级部署执行 `sudo systemctl restart ai-bot`，也可以用 `/opt/ai-bot/bin/ai-bot --restart`。改了 `/etc/ai-bot/config.toml` 要重启才生效。
 - **升级**：`git pull && deploy/setup.sh`。
   - 重新编译，原子替换二进制，运行中的进程不受影响。
   - 保留配置和 App Secret。

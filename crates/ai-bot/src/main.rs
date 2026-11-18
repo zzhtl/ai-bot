@@ -17,6 +17,7 @@ mod oauth;
 mod prompt;
 mod render;
 mod runner;
+mod service;
 mod store;
 mod whitelist;
 mod writeback;
@@ -54,6 +55,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// 启动已安装的 ai-bot 服务
+    #[command(long_flag = "start")]
+    Start,
+    /// 停止 ai-bot 服务及其子进程
+    #[command(long_flag = "stop")]
+    Stop,
+    /// 重启 ai-bot 服务，重新读取配置
+    #[command(long_flag = "restart")]
+    Restart,
     /// 连上飞书长连接并开始处理消息
     Run {
         /// 配置文件路径
@@ -88,6 +98,9 @@ enum Command {
 
 fn main() -> ExitCode {
     match Cli::parse().command {
+        Command::Start => service::control("start"),
+        Command::Stop => service::control("stop"),
+        Command::Restart => service::control("restart"),
         // hook 是每次工具调用都要起一次的短命进程，stdout 专用于判决：
         // 不初始化日志，也不构建运行时
         Command::Hook(args) => hook::run(&args),
