@@ -2927,8 +2927,11 @@ async fn restart_retains_model_until_the_cache_is_expired() {
     let saved = w.store.conversation(id).await.expect("查询").expect("会话");
     assert_eq!(saved.model_override.as_deref(), Some("catalog-2"));
     assert_eq!(saved.effort_override.as_deref(), Some("xhigh"));
-    std::fs::write(&cache, json!({"checked_at_ms": 0, "models": []}).to_string())
-        .expect("过期缓存");
+    std::fs::write(
+        &cache,
+        json!({"checked_at_ms": 0, "models": []}).to_string(),
+    )
+    .expect("过期缓存");
     crate::reset_expired_model_preferences(&w.store, w._dir.path())
         .await
         .expect("模拟过期后重启");
@@ -3005,10 +3008,7 @@ async fn codex_model_switch_is_persisted_and_applies_to_queued_turns() {
     let first = last_card(&w, "om_card_1").await.to_string();
     let second = last_card(&w, "om_card_2").await.to_string();
     assert!(first.contains("本轮：opus · high"), "{first}");
-    assert!(
-        second.contains("本轮：complex-model · xhigh"),
-        "{second}"
-    );
+    assert!(second.contains("本轮：complex-model · xhigh"), "{second}");
     let reopened = Store::open(w._dir.path()).await.expect("重开数据库");
     let saved = reopened
         .conversation(&turns[0].conversation_id)
@@ -3223,12 +3223,14 @@ async fn model_dropdown_uses_the_hourly_cache_and_switches_without_an_extra_card
     let reply_count = replies(&w).await.len();
     press(&w, action, &turn_id).await;
     let row = card["body"]["elements"]
-        .as_array().expect("元素").iter()
+        .as_array()
+        .expect("元素")
+        .iter()
         .find(|element| element["element_id"] == "model_controls")
         .expect("设置行");
     let effort = &row["columns"][1]["elements"][0];
-    let (action, turn_id) = Action::parse(&effort["behaviors"][0]["value"], "xhigh")
-        .expect("强度下拉回调");
+    let (action, turn_id) =
+        Action::parse(&effort["behaviors"][0]["value"], "xhigh").expect("强度下拉回调");
     press(&w, action, &turn_id).await;
     assert_eq!(replies(&w).await.len(), reply_count, "切换不弹出另一张卡片");
     say(&w, "om_2", "继续", json!({})).await;
@@ -3315,7 +3317,9 @@ async fn model_dropdown_keeps_the_saved_selection_when_a_running_card_is_redrawn
         .expect("下拉框");
     assert_eq!(select["initial_option"], "catalog-2");
     let row = card["body"]["elements"]
-        .as_array().expect("元素").iter()
+        .as_array()
+        .expect("元素")
+        .iter()
         .find(|element| element["element_id"] == "model_controls")
         .expect("设置行");
     assert_eq!(row["columns"][1]["elements"][0]["initial_option"], "low");

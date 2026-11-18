@@ -577,10 +577,7 @@ mod tests {
     fn mcp_names_and_paths_are_checked() {
         let raw = EXAMPLE.replace("name = \"qtmcp\"", "name = \"Qt-MCP\"");
         assert!(Config::parse(&raw).is_err());
-        let raw = EXAMPLE.replace(
-            "command = \"/opt/ai-bot/bin/qtmcp\"",
-            "command = \"qtmcp\"",
-        );
+        let raw = EXAMPLE.replace("command = \"/opt/ai-bot/bin/qtmcp\"", "command = \"qtmcp\"");
         assert!(Config::parse(&raw).is_err());
     }
 }

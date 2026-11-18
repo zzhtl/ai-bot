@@ -36,8 +36,16 @@ printf '%s\n' '{"type":"thread.started","thread_id":"test-thread"}' '{"type":"tu
     });
     for (run, session, effort) in [
         ("first", SessionRef::New, Some(Effort::High)),
-        ("next", SessionRef::Resume("test-thread".into()), Some(Effort::High)),
-        ("retry", SessionRef::Resume("test-thread".into()), Some(Effort::High)),
+        (
+            "next",
+            SessionRef::Resume("test-thread".into()),
+            Some(Effort::High),
+        ),
+        (
+            "retry",
+            SessionRef::Resume("test-thread".into()),
+            Some(Effort::High),
+        ),
         ("switch-first", SessionRef::New, Some(Effort::Xhigh)),
         (
             "switch-next",
@@ -56,8 +64,16 @@ printf '%s\n' '{"type":"thread.started","thread_id":"test-thread"}' '{"type":"tu
             Some(Effort::Max),
         ),
         ("default-first", SessionRef::New, None),
-        ("default-next", SessionRef::Resume("test-thread".into()), None),
-        ("default-retry", SessionRef::Resume("test-thread".into()), None),
+        (
+            "default-next",
+            SessionRef::Resume("test-thread".into()),
+            None,
+        ),
+        (
+            "default-retry",
+            SessionRef::Resume("test-thread".into()),
+            None,
+        ),
     ] {
         let model = if run.starts_with("switch") {
             "complex-model"
@@ -114,14 +130,10 @@ printf '%s\n' '{"type":"thread.started","thread_id":"test-thread"}' '{"type":"tu
             args.windows(2)
                 .any(|pair| pair == ["-c", expected.as_str()])
         );
-        assert!(
-            !args
-                .iter()
-                .any(|arg| {
-                    arg.contains("personal-model")
-                        || (effort != Some(Effort::Max) && arg.contains("\"max\""))
-                })
-        );
+        assert!(!args.iter().any(|arg| {
+            arg.contains("personal-model")
+                || (effort != Some(Effort::Max) && arg.contains("\"max\""))
+        }));
         assert_eq!(args.contains(&"resume"), !run.ends_with("first"));
     }
 }

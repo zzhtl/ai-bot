@@ -179,8 +179,7 @@ impl Ingest {
         } else {
             action.action.option.as_str()
         };
-        let Some((kind, turn_id)) = Action::parse(&action.action.value, selected)
-        else {
+        let Some((kind, turn_id)) = Action::parse(&action.action.value, selected) else {
             return Ok(Some(Toast::warning("无法识别的操作").to_bytes()));
         };
         tracing::info!(action = ?kind, turn = %turn_id, "卡片按钮");

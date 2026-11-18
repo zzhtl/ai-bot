@@ -67,22 +67,14 @@ enum Command {
     /// 连上飞书长连接并开始处理消息
     Run {
         /// 配置文件路径
-        #[arg(
-            long,
-            env = "AI_BOT_CONFIG",
-            default_value = "/etc/ai-bot/config.toml"
-        )]
+        #[arg(long, env = "AI_BOT_CONFIG", default_value = "/etc/ai-bot/config.toml")]
         config: PathBuf,
     },
     /// 部署后自检：逐项检查配置、权限、飞书、Agent、MCP、外部工具
     ///
     /// 要用服务的运行用户和环境执行才有意义：部署后用 `deploy/doctor.sh`
     Doctor {
-        #[arg(
-            long,
-            env = "AI_BOT_CONFIG",
-            default_value = "/etc/ai-bot/config.toml"
-        )]
+        #[arg(long, env = "AI_BOT_CONFIG", default_value = "/etc/ai-bot/config.toml")]
         config: PathBuf,
     },
     /// Agent CLI 调用的工具判决 hook（由 CLI 按 hook 配置调起，不要手动运行）

@@ -193,7 +193,11 @@ mod tests {
     fn effort_dropdown_accepts_valid_options_and_preserves_old_buttons() {
         let dropdown = json!({ "action": "effort", "turn": "t-1" });
         for effort in [
-            Effort::Low, Effort::Medium, Effort::High, Effort::Xhigh, Effort::Max,
+            Effort::Low,
+            Effort::Medium,
+            Effort::High,
+            Effort::Xhigh,
+            Effort::Max,
         ] {
             assert_eq!(
                 Action::parse(&dropdown, effort.as_str()),

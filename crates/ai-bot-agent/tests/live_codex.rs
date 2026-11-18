@@ -1,8 +1,6 @@
 //! 本机真实 CLI 验证：设置 AI_BOT_CODEX_PROFILE、AI_BOT_CONFLUENCE_PAGE_ID 后运行 --ignored。
 use ai_bot_agent::codex::{CodexBackend, CodexConfig};
-use ai_bot_agent::{
-    AgentBackend, AgentEvent, Effort, McpServer, Outcome, SessionRef, TurnRequest,
-};
+use ai_bot_agent::{AgentBackend, AgentEvent, Effort, McpServer, Outcome, SessionRef, TurnRequest};
 use serde_json::json;
 use std::time::Duration;
 

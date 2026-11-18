@@ -231,7 +231,11 @@ fn command_elements(commands: &[Command], keep_extra: bool) -> Vec<Value> {
     if commands.is_empty() {
         return Vec::new();
     }
-    let count = if keep_extra { commands.len() } else { commands.len().min(SHOWN_COMMANDS) };
+    let count = if keep_extra {
+        commands.len()
+    } else {
+        commands.len().min(SHOWN_COMMANDS)
+    };
     let mut out = vec![command_box(&commands[..count], 0, commands.len() > 1)];
     if count < commands.len() {
         out.push(markdown(format!(
@@ -609,11 +613,7 @@ fn build_answer(
     links: &dyn LinkPolicy,
     muted: bool,
 ) -> Value {
-    let mut elements = summary_blocks(
-        &truncate(&answer.summary, SUMMARY_CHARS),
-        links,
-        muted,
-    );
+    let mut elements = summary_blocks(&truncate(&answer.summary, SUMMARY_CHARS), links, muted);
     let mut groups: [Vec<Value>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     let mut suspected = answer.status != Status::Answered;
     let mut room = Room {
@@ -622,7 +622,11 @@ fn build_answer(
     };
     for (section, body) in answer.sections.iter().zip(bodies) {
         let title = section.title.trim();
-        let mut content = if body.trim().is_empty() { Vec::new() } else { markdown_blocks(body, links) };
+        let mut content = if body.trim().is_empty() {
+            Vec::new()
+        } else {
+            markdown_blocks(body, links)
+        };
         content.extend(visuals(answer, section, &mut room));
         if content.is_empty() {
             continue;
@@ -631,13 +635,17 @@ fn build_answer(
         let group = if title.contains("原因") || title.contains("根因") {
             suspected |= title.contains("可疑") || title.contains("可能") || title.contains("疑似");
             0
-        } else if title.starts_with("解决") || title.starts_with("处理") || title.starts_with("修复")
-            || matches!(title, "相关用法" | "结果判断") {
+        } else if title.starts_with("解决")
+            || title.starts_with("处理")
+            || title.starts_with("修复")
+            || matches!(title, "相关用法" | "结果判断")
+        {
             2
         } else {
             1
         };
-        if !title.is_empty() && !matches!(title, "根本原因" | "可疑原因" | "依据" | "解决方案") {
+        if !title.is_empty() && !matches!(title, "根本原因" | "可疑原因" | "依据" | "解决方案")
+        {
             groups[group].push(markdown(format!("**{}**", inline(title))));
         }
         groups[group].extend(content);
@@ -681,7 +689,11 @@ fn build_answer(
         groups[2].insert(0, markdown(format!("**待确认**\n{}", items.join("\n"))));
     }
     groups[2].extend(command_elements(&answer.commands, keep.extra_commands));
-    let cause = if suspected { "可疑原因" } else { "根本原因" };
+    let cause = if suspected {
+        "可疑原因"
+    } else {
+        "根本原因"
+    };
     for (title, content) in [cause, "依据", "解决方案"].into_iter().zip(groups) {
         if !content.is_empty() {
             elements.push(panel(title, false, content));
@@ -941,7 +953,14 @@ fn model_elements(
             inline(effort.unwrap_or("未记录")),
         ))];
     };
-    let mut reset = button("默认", "default", "reset_model", &Action::ResetModel, turn_id, None);
+    let mut reset = button(
+        "默认",
+        "default",
+        "reset_model",
+        &Action::ResetModel,
+        turn_id,
+        None,
+    );
     reset["hover_tips"] = json!({
         "tag": "plain_text",
         "content": format!("本轮：{} · {}。恢复默认模型和强度，下一轮或重试生效。", plain(model, 128), plain(effort.unwrap_or("未记录"), 20)),
@@ -981,12 +1000,7 @@ pub fn model_choices(models: &[ModelOption], model: &str, effort: &str, turn_id:
         inline(effort),
     ))];
     elements.push(model_select(models, model, turn_id));
-    card(
-        "选择 Codex 模型",
-        "按需更新的模型目录",
-        "blue",
-        elements,
-    )
+    card("选择 Codex 模型", "按需更新的模型目录", "blue", elements)
 }
 
 fn model_select(models: &[ModelOption], model: &str, turn_id: &str) -> Value {
@@ -1288,9 +1302,14 @@ mod tests {
     }
 
     fn detail<'a>(card: &'a Value, title: &str) -> &'a Value {
-        card["body"]["elements"].as_array().expect("元素").iter()
-            .find(|element| element["tag"] == "collapsible_panel"
-                && element["header"]["title"]["content"] == format!("**{title}**"))
+        card["body"]["elements"]
+            .as_array()
+            .expect("元素")
+            .iter()
+            .find(|element| {
+                element["tag"] == "collapsible_panel"
+                    && element["header"]["title"]["content"] == format!("**{title}**")
+            })
             .expect("详情分组")
     }
 
@@ -1375,7 +1394,13 @@ mod tests {
         assert!(questions.contains("补充现场日志"));
         assert!(solution["elements"][1].to_string().contains("ps -ef"));
         assert_eq!(solution["expanded"], false);
-        assert_eq!(tags(&card).iter().filter(|tag| *tag == "collapsible_panel").count(), 1);
+        assert_eq!(
+            tags(&card)
+                .iter()
+                .filter(|tag| *tag == "collapsible_panel")
+                .count(),
+            1
+        );
     }
 
     /// 可疑原因不能标成已确认，确认后的更正归到依据。
@@ -1628,7 +1653,9 @@ mod tests {
             "/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server <地址> --describe --all-groups",
         )];
         let card = render_answer(&a);
-        let elements = detail(&card, "解决方案")["elements"].as_array().expect("命令");
+        let elements = detail(&card, "解决方案")["elements"]
+            .as_array()
+            .expect("命令");
         assert_eq!(
             elements[0]["content"],
             "```bash\n# 查看消费堆积（kafka 所在主机）\n/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server <地址> --describe --all-groups\n```\n\n<font color='grey'>看 LAG 列</font>"
@@ -1641,7 +1668,9 @@ mod tests {
         a.commands[1].place = String::new();
         a.commands[1].look = String::new();
         let card = render_answer(&a);
-        let elements = detail(&card, "解决方案")["elements"].as_array().expect("命令");
+        let elements = detail(&card, "解决方案")["elements"]
+            .as_array()
+            .expect("命令");
         assert_eq!(
             elements[0]["content"],
             "```bash\n# 1. 第 1 步（kafka 所在主机）\necho 1\n# 2. 第 2 步\necho 2\n# 3. 第 3 步（kafka 所在主机）\necho 3\n# 4. 第 4 步（kafka 所在主机）\necho 4\n# 5. 第 5 步（kafka 所在主机）\necho 5\n```\n\n<font color='grey'>1. 看 LAG 列</font>\n<font color='grey'>3. 看 LAG 列</font>\n<font color='grey'>4. 看 LAG 列</font>\n<font color='grey'>5. 看 LAG 列</font>"
@@ -1874,8 +1903,12 @@ mod tests {
         assert_eq!(model["initial_option"], "gpt-6.1-sol");
         assert_eq!(model["options"][0]["text"]["content"], "gpt-6.1-sol");
         assert_eq!(effort["initial_option"], "xhigh");
-        assert!(row["columns"][2]["elements"][0]["hover_tips"]["content"]
-            .as_str().expect("提示").contains("old-model · high"));
+        assert!(
+            row["columns"][2]["elements"][0]["hover_tips"]["content"]
+                .as_str()
+                .expect("提示")
+                .contains("old-model · high")
+        );
         assert_eq!(
             Action::parse(&effort["behaviors"][0]["value"], "xhigh"),
             Some((Action::Effort(Effort::Xhigh), "t-1".into()))
@@ -1887,7 +1920,10 @@ mod tests {
         assert!(model.get("initial_option").is_none());
         let archived = model_elements(Some("old-model"), Some("high"), None, &[]);
         assert_eq!(archived.len(), 1);
-        assert_eq!(archived[0]["content"], "<font color='grey'>old-model · high</font>");
+        assert_eq!(
+            archived[0]["content"],
+            "<font color='grey'>old-model · high</font>"
+        );
     }
 
     #[test]
@@ -1916,11 +1952,7 @@ mod tests {
             configure: Some("t-1"),
             ..Progress::default()
         });
-        assert!(
-            progress
-                .to_string()
-                .contains("本轮：complex-model · high")
-        );
+        assert!(progress.to_string().contains("本轮：complex-model · high"));
         let failure = with_model(
             failure("失败", "无法使用模型", "", Some("t-1")),
             "complex-model",

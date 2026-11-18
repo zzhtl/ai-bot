@@ -540,7 +540,8 @@ impl Runner {
             }
         }
         if report.status == TurnStatus::Succeeded {
-            self.send_download_files(&card_id, report.answer_json.as_deref()).await;
+            self.send_download_files(&card_id, report.answer_json.as_deref())
+                .await;
         }
         if spec.kind == TurnKind::Ask && report.status == TurnStatus::Succeeded {
             self.mark_superseded(&spec, &conversation, report.answer_json.as_deref())
@@ -588,7 +589,8 @@ impl Runner {
                         match self.api.upload_file(&view.name, bytes).await {
                             Ok(key) => {
                                 view.file_key = Some(key);
-                                view.note = Some("文件无法直接预览，原文件见下方附件，可点击下载。".into());
+                                view.note =
+                                    Some("文件无法直接预览，原文件见下方附件，可点击下载。".into());
                             }
                             Err(err) => view.note = Some(format!("附件上传失败：{err}")),
                         }
@@ -1386,9 +1388,7 @@ impl Runner {
         if index.is_some() {
             rules.push_str(knowledge::RULES);
         } else {
-            rules.push_str(
-                "\n本轮索引不可用。",
-            );
+            rules.push_str("\n本轮索引不可用。");
         }
         let request = TurnRequest {
             session,

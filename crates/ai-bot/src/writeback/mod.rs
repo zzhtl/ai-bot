@@ -358,7 +358,9 @@ impl Writer {
             return;
         };
         let rows = self.store.writebacks(turn_id).await.unwrap_or_default();
-        if record.reasoning_effort.is_some() && let Some((cache, _, _)) = self.models.get() {
+        if record.reasoning_effort.is_some()
+            && let Some((cache, _, _)) = self.models.get()
+        {
             cache.refresh_if_needed().await;
         }
         let (Some(card_id), Some(mut card)) = (
